@@ -2,8 +2,9 @@
     <string name="app_name">PopLive</string>
     <string name="action_sign_in_google">Sign in with Google</string>
     <string name="auth_headline">Go Live. Battle. Shine.</string>
-    <string name="auth_subhead">Real-time video rooms, live PK duels, animated gifts, and creator communities.</string>
+    <string name="auth_subhead">Real-time video rooms, 6-seat party stages, live PK duels, and animated virtual gifts.</string>
     <string name="nav_discover">Discover</string>
+    <string name="nav_rankings">Rankings</string>
     <string name="nav_go_live">Go Live</string>
     <string name="nav_wallet">Wallet</string>
     <string name="action_go_live_now">Go Live Now</string>

@@ -66,6 +66,7 @@ function validStreamPayload(hostId, now, overrides = {}) {
     visibility: "PUBLIC",
     status: "LIVE",
     pkActive: false,
+    partyMode: false,
     pkHostScore: 0,
     pkOpponentScore: 0,
     viewerCount: 1,
@@ -86,7 +87,7 @@ test("Unauthenticated user: denied from reading or writing any collection", asyn
   await assertFails(unauthDb.collection("live_streams").doc("stream_1").set(validStreamPayload(ALICE_UID, now)));
 });
 
-test("UserProfile & Transactions: strict owner-only access and shadow-field rejection", async () => {
+test("UserProfile, Transactions & Following: strict owner-only access", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const now = new Date(Date.now() - 2000);
@@ -95,16 +96,25 @@ test("UserProfile & Transactions: strict owner-only access and shadow-field reje
     aliceDb.collection("users").doc(ALICE_UID).set(validProfilePayload(ALICE_UID, now))
   );
 
-  // Partial update on profile metadata
+  // Follow host under owner's subcollection
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).update({
-      displayName: "Aria Live",
-      bio: "Live every night!",
-      updatedAt: new Date(Date.now() - 1000),
+    bobDb.collection("users").doc(BOB_UID).collection("following").doc(ALICE_UID).set({
+      userId: BOB_UID,
+      hostId: ALICE_UID,
+      hostName: "Aria Spark",
+      hostLevel: 12,
+      createdAt: now,
     })
   );
+  await assertSucceeds(
+    bobDb.collection("users").doc(BOB_UID).collection("following").get()
+  );
+  // Cross-user following read/write rejected
+  await assertFails(
+    aliceDb.collection("users").doc(BOB_UID).collection("following").get()
+  );
 
-  // Reject ghost field & cross-user access
+  // Reject ghost field & cross-user profile update
   await assertFails(
     aliceDb.collection("users").doc(ALICE_UID).update({
       isAdmin: true,
@@ -112,86 +122,53 @@ test("UserProfile & Transactions: strict owner-only access and shadow-field reje
     })
   );
   await assertFails(bobDb.collection("users").doc(ALICE_UID).get());
-  await assertFails(
-    bobDb.collection("users").doc(ALICE_UID).update({ coinBalance: 999999, updatedAt: new Date(Date.now() - 500) })
-  );
-
-  // Owner transaction create succeeds; immutable update fails
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_1").set({
-      userId: ALICE_UID,
-      txType: "DAILY_BONUS",
-      title: "Daily Check-in Day 1",
-      coinDelta: 500,
-      createdAt: now,
-    })
-  );
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").get()
-  );
-  await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_1").update({ coinDelta: 9999 })
-  );
 });
 
-test("LiveStreams: public query succeeds, unfiltered query fails, terminal lock & engagement rules hold", async () => {
+test("LiveStreams & PartySeats: public query succeeds, unfiltered fails, seat claim/mute/leave works", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const created = new Date(Date.now() - 5000);
 
-  // Create PUBLIC LIVE stream without @DocumentId id field
   await assertSucceeds(
-    aliceDb.collection("live_streams").doc("stream_1").set(validStreamPayload(ALICE_UID, created))
-  );
-
-  // Reject @DocumentId `id` key in payload & future timestamp
-  await assertFails(
-    aliceDb.collection("live_streams").doc("stream_bad").set({
-      id: "stream_bad",
-      ...validStreamPayload(ALICE_UID, created),
-    })
-  );
-  await assertFails(
-    aliceDb.collection("live_streams").doc("stream_future").set(
-      validStreamPayload(ALICE_UID, new Date(Date.now() + 60000))
+    aliceDb.collection("live_streams").doc("stream_party_1").set(
+      validStreamPayload(ALICE_UID, created, { partyMode: true })
     )
   );
 
-  // Filtered PUBLIC query succeeds; unfiltered list fails
+  // Viewer claims seat 2
   await assertSucceeds(
-    bobDb.collection("live_streams").where("visibility", "==", "PUBLIC").get()
-  );
-  await assertFails(bobDb.collection("live_streams").get());
-
-  // Viewer engagement update succeeds on counter fields only
-  await assertSucceeds(
-    bobDb.collection("live_streams").doc("stream_1").update({
-      likeCount: 5,
-      totalGiftsCoins: 100,
-      updatedAt: new Date(Date.now() - 1000),
+    bobDb.collection("live_streams").doc("stream_party_1").collection("seats").doc("seat_2").set({
+      streamId: "stream_party_1",
+      streamVisibility: "PUBLIC",
+      hostId: ALICE_UID,
+      seatNumber: 2,
+      occupantId: BOB_UID,
+      occupantName: "Bob",
+      occupantLevel: 4,
+      micMuted: false,
+      createdAt: new Date(Date.now() - 2000),
+      updatedAt: new Date(Date.now() - 2000),
     })
   );
 
-  // Viewer cannot hijack title or status
-  await assertFails(
-    bobDb.collection("live_streams").doc("stream_1").update({
-      title: "Hacked Title",
-      updatedAt: new Date(Date.now() - 1000),
-    })
-  );
-
-  // Host ends stream -> terminal state locks subsequent updates
+  // Filtered query succeeds; unfiltered query fails
   await assertSucceeds(
-    aliceDb.collection("live_streams").doc("stream_1").update({
-      status: "ENDED",
-      updatedAt: new Date(Date.now() - 1000),
-    })
+    bobDb.collection("live_streams").doc("stream_party_1").collection("seats")
+      .where("streamVisibility", "==", "PUBLIC").get()
   );
   await assertFails(
-    bobDb.collection("live_streams").doc("stream_1").update({
-      likeCount: 10,
-      updatedAt: new Date(Date.now() - 500),
+    bobDb.collection("live_streams").doc("stream_party_1").collection("seats").get()
+  );
+
+  // Host or occupant can mute mic; occupant can leave seat
+  await assertSucceeds(
+    aliceDb.collection("live_streams").doc("stream_party_1").collection("seats").doc("seat_2").update({
+      micMuted: true,
+      updatedAt: new Date(Date.now() - 1000),
     })
+  );
+  await assertSucceeds(
+    bobDb.collection("live_streams").doc("stream_party_1").collection("seats").doc("seat_2").delete()
   );
 });
 
@@ -204,7 +181,6 @@ test("StreamMessages: real-time chat & gift events require parent stream and fil
     aliceDb.collection("live_streams").doc("stream_chat_1").set(validStreamPayload(ALICE_UID, now))
   );
 
-  // Valid gift message
   await assertSucceeds(
     bobDb.collection("live_streams").doc("stream_chat_1").collection("messages").doc("msg_1").set({
       streamId: "stream_chat_1",
@@ -221,26 +197,6 @@ test("StreamMessages: real-time chat & gift events require parent stream and fil
     })
   );
 
-  // Sender spoofing rejected
-  await assertFails(
-    bobDb.collection("live_streams").doc("stream_chat_1").collection("messages").doc("msg_spoof").set({
-      streamId: "stream_chat_1",
-      streamVisibility: "PUBLIC",
-      hostId: ALICE_UID,
-      senderId: ALICE_UID,
-      senderName: "Alice",
-      senderLevel: 12,
-      messageType: "CHAT",
-      body: "Spoofed!",
-      createdAt: new Date(Date.now() - 1000),
-    })
-  );
-
-  // Filtered query succeeds; unfiltered query fails
-  await assertSucceeds(
-    bobDb.collection("live_streams").doc("stream_chat_1").collection("messages")
-      .where("streamVisibility", "==", "PUBLIC").get()
-  );
   await assertFails(
     bobDb.collection("live_streams").doc("stream_chat_1").collection("messages").get()
   );

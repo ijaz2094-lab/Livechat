@@ -46,9 +46,22 @@
       },
       "required": ["userId", "txType", "title", "coinDelta", "createdAt"]
     },
+    "FollowedHost": {
+      "title": "FollowedHost",
+      "description": "User-scoped followed host subscription entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Follower UID." },
+        "hostId": { "type": "string", "description": "Followed host UID." },
+        "hostName": { "type": "string", "description": "Followed host display name." },
+        "hostLevel": { "type": "integer", "description": "Followed host level." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." }
+      },
+      "required": ["userId", "hostId", "hostName", "hostLevel", "createdAt"]
+    },
     "LiveStream": {
       "title": "LiveStream",
-      "description": "Real-time live video broadcast room with PK battle scores and engagement counters.",
+      "description": "Real-time live video broadcast room with PK battle scores, party seat mode, and engagement counters.",
       "type": "object",
       "properties": {
         "hostId": { "type": "string", "description": "Host Firebase Auth UID." },
@@ -62,6 +75,7 @@
         "visibility": { "type": "string", "enum": ["PUBLIC", "PRIVATE"] },
         "status": { "type": "string", "enum": ["LIVE", "ENDED"] },
         "pkActive": { "type": "boolean", "description": "Whether PK battle mode is active." },
+        "partyMode": { "type": "boolean", "description": "Optional multi-guest party seat mode flag." },
         "pkOpponentName": { "type": "string", "description": "Optional PK opponent display name." },
         "pkHostScore": { "type": "integer", "description": "Host PK battle score." },
         "pkOpponentScore": { "type": "integer", "description": "Opponent PK battle score." },
@@ -119,6 +133,35 @@
         "body",
         "createdAt"
       ]
+    },
+    "PartySeat": {
+      "title": "PartySeat",
+      "description": "Guest stage seat occupancy in a multi-seat party live room.",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string", "description": "Parent live_streams document ID." },
+        "streamVisibility": { "type": "string", "enum": ["PUBLIC", "PRIVATE"] },
+        "hostId": { "type": "string", "description": "Parent stream host UID." },
+        "seatNumber": { "type": "integer", "description": "1-based stage seat number (1..6)." },
+        "occupantId": { "type": "string", "description": "UID of user currently on stage seat." },
+        "occupantName": { "type": "string", "description": "Display name of seated user." },
+        "occupantLevel": { "type": "integer", "description": "Level of seated user." },
+        "micMuted": { "type": "boolean", "description": "Whether seat mic is muted." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": [
+        "streamId",
+        "streamVisibility",
+        "hostId",
+        "seatNumber",
+        "occupantId",
+        "occupantName",
+        "occupantLevel",
+        "micMuted",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -130,6 +173,10 @@
       "schema": { "$ref": "#/entities/CoinTransaction" },
       "description": "Owner-only coin and gift transaction history."
     },
+    "/users/{userId}/following/{targetHostId}": {
+      "schema": { "$ref": "#/entities/FollowedHost" },
+      "description": "Owner-only followed hosts list."
+    },
     "/live_streams/{streamId}": {
       "schema": { "$ref": "#/entities/LiveStream" },
       "description": "Publicly discoverable or private live video stream rooms."
@@ -137,6 +184,10 @@
     "/live_streams/{streamId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/StreamMessage" },
       "description": "Real-time chat and virtual gift events inside a stream room."
+    },
+    "/live_streams/{streamId}/seats/{seatId}": {
+      "schema": { "$ref": "#/entities/PartySeat" },
+      "description": "Multi-guest party stage seats inside a stream room."
     }
   }
 }

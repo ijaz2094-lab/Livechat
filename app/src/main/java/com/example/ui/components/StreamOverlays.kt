@@ -3,11 +3,14 @@ package com.example.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
@@ -29,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -37,13 +41,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.WorkspacePremium
@@ -68,7 +75,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -79,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.model.GiftCatalogItem
 import com.example.model.MessageType
+import com.example.model.PartySeat
 import com.example.model.PopLiveGifts
 import com.example.model.StreamMessage
 import com.example.ui.theme.CoralPink
@@ -110,7 +117,7 @@ fun PkBattleProgressBar(
 
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = CosmicObsidian.copy(alpha = 0.75f),
+        color = CosmicObsidian.copy(alpha = 0.78f),
         border = BorderStroke(1.dp, VelvetOutline.copy(alpha = 0.8f)),
         modifier = modifier.fillMaxWidth(),
     ) {
@@ -178,6 +185,141 @@ fun PkBattleProgressBar(
                             Brush.horizontalGradient(listOf(CoralPink, Color(0xFFFF6B9D)))
                         ),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun PartySeatsGrid(
+    seats: List<PartySeat>,
+    currentUserId: String,
+    hostId: String,
+    onClaimSeat: (Long) -> Unit,
+    onToggleMute: (PartySeat) -> Unit,
+    onLeaveSeat: (PartySeat) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val seatByNumber = remember(seats) { seats.associateBy { it.seatNumber } }
+    val userSeated = remember(seats, currentUserId) { seats.any { it.occupantId == currentUserId } }
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = CosmicObsidian.copy(alpha = 0.64f),
+        border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.35f)),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Party Stage • ${seats.size}/6 Seated",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ElectricCyan,
+                )
+                Text(
+                    text = if (userSeated) "Tap your seat to mute/leave" else "Tap open seat to join",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFD5CBEB),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.height(148.dp),
+            ) {
+                items((1L..6L).toList(), key = { it }) { seatNum ->
+                    val occupant = seatByNumber[seatNum]
+                    val isMine = occupant?.occupantId == currentUserId
+                    val canManage = isMine || currentUserId == hostId
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (occupant != null) {
+                            VelvetSurfaceHigh.copy(alpha = 0.85f)
+                        } else {
+                            VelvetSurface.copy(alpha = 0.55f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            when {
+                                isMine -> CoralPink
+                                occupant != null -> ElectricCyan.copy(alpha = 0.6f)
+                                else -> VelvetOutline.copy(alpha = 0.7f)
+                            }
+                        ),
+                        modifier = Modifier
+                            .height(68.dp)
+                            .clickable {
+                                if (occupant == null && !userSeated) {
+                                    onClaimSeat(seatNum)
+                                } else if (occupant != null && canManage) {
+                                    onToggleMute(occupant)
+                                }
+                            }
+                            .testTag("party_seat_$seatNum"),
+                    ) {
+                        if (occupant == null) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "Join seat $seatNum",
+                                    tint = ElectricCyan,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Text(
+                                    text = "Seat $seatNum",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFCBBFE6),
+                                )
+                            }
+                        } else {
+                            Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+                                if (canManage) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Leave seat",
+                                        tint = Color(0xFFCBBFE6),
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(16.dp)
+                                            .clickable { onLeaveSeat(occupant) },
+                                    )
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    Icon(
+                                        imageVector = if (occupant.micMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                                        contentDescription = null,
+                                        tint = if (occupant.micMuted) CoralPink else ElectricCyan,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = occupant.occupantName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -253,6 +395,71 @@ fun FloatingGiftBanner(
     }
 }
 
+@Composable
+fun MegaGiftStageOverlay(
+    giftMessage: StreamMessage?,
+    modifier: Modifier = Modifier,
+) {
+    var showBurst by remember { mutableStateOf(false) }
+    var lastBurstId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(giftMessage?.id) {
+        val coins = giftMessage?.giftCoins ?: 0L
+        if (giftMessage != null && coins >= 100L && giftMessage.id != lastBurstId) {
+            lastBurstId = giftMessage.id
+            showBurst = true
+            delay(2400L)
+            showBurst = false
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AnimatedVisibility(
+            visible = showBurst && giftMessage != null,
+            enter = scaleIn(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessLow,
+                )
+            ) + fadeIn(),
+            exit = scaleOut() + fadeOut(),
+        ) {
+            val msg = giftMessage ?: return@AnimatedVisibility
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = CosmicObsidian.copy(alpha = 0.88f),
+                border = BorderStroke(
+                    2.dp,
+                    Brush.linearGradient(listOf(WarmGold, CoralPink, ElectricCyan)),
+                ),
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 20.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = WarmGold,
+                        modifier = Modifier.size(44.dp),
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = msg.giftName ?: "VIP Gift",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = WarmGold,
+                    )
+                    Text(
+                        text = "${msg.senderName} • ${msg.giftCoins ?: 0} PopCoins",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                    )
+                }
+            }
+        }
+    }
+}
+
 private data class HeartParticle(
     val id: Int,
     val startXFraction: Float,
@@ -314,6 +521,36 @@ fun FloatingHeartsOverlay(
 }
 
 @Composable
+fun QuickReactionBar(
+    onReact: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val quickPrompts = remember {
+        listOf("Hype!", "Amazing!", "GG!", "Encore!")
+    }
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier,
+    ) {
+        items(quickPrompts) { prompt ->
+            Surface(
+                shape = CircleShape,
+                color = CosmicObsidian.copy(alpha = 0.68f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                modifier = Modifier.clickable { onReact(prompt) },
+            ) {
+                Text(
+                    text = prompt,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun LiveChatFeed(
     messages: List<StreamMessage>,
     modifier: Modifier = Modifier,
@@ -328,14 +565,14 @@ fun LiveChatFeed(
     LazyColumn(
         state = listState,
         verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = modifier.heightIn(max = 220.dp),
+        modifier = modifier.heightIn(max = 190.dp),
     ) {
         items(messages, key = { it.id.ifEmpty { "${it.senderId}_${it.body.hashCode()}" } }) { msg ->
             val msgType = msg.messageTypeEnum()
             val bgColor = when (msgType) {
-                MessageType.GIFT -> CoralPink.copy(alpha = 0.42f)
+                MessageType.GIFT -> CoralPink.copy(alpha = 0.45f)
                 MessageType.SYSTEM -> ElectricCyan.copy(alpha = 0.25f)
-                else -> CosmicObsidian.copy(alpha = 0.55f)
+                else -> CosmicObsidian.copy(alpha = 0.58f)
             }
             Surface(
                 shape = RoundedCornerShape(14.dp),

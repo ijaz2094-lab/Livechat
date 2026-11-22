@@ -9,13 +9,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -30,10 +31,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -59,10 +58,12 @@ import com.example.data.PopLiveRepository
 import com.example.data.attemptAutoSignIn
 import com.example.data.authStateFlow
 import com.example.data.signOut
+import com.example.model.UiState
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.GoLiveStudioScreen
 import com.example.ui.screens.LiveDiscoveryScreen
 import com.example.ui.screens.LiveRoomScreen
+import com.example.ui.screens.RankingsScreen
 import com.example.ui.screens.WalletAndProfileScreen
 import com.example.ui.theme.CoralPink
 import com.example.ui.theme.CosmicObsidian
@@ -75,6 +76,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 
 object NavRoutes {
     const val DISCOVER = "discover"
+    const val RANKINGS = "rankings"
     const val GO_LIVE = "go_live"
     const val WALLET = "wallet"
     const val LIVE_ROOM = "live_room/{streamId}"
@@ -97,6 +99,13 @@ private val topLevelTabs = listOf(
         selectedIcon = Icons.Filled.Explore,
         unselectedIcon = Icons.Outlined.Explore,
         testTag = "nav_discover",
+    ),
+    TopLevelTab(
+        route = NavRoutes.RANKINGS,
+        labelRes = R.string.nav_rankings,
+        selectedIcon = Icons.Filled.EmojiEvents,
+        unselectedIcon = Icons.Outlined.EmojiEvents,
+        testTag = "nav_rankings",
     ),
     TopLevelTab(
         route = NavRoutes.GO_LIVE,
@@ -165,10 +174,15 @@ private fun AuthenticatedPopLiveShell(currentUserId: String) {
 
     val profileState by viewModel.userProfileState.collectAsStateWithLifecycle()
     val streamsState by viewModel.liveStreamsState.collectAsStateWithLifecycle()
+    val followingState by viewModel.followingHostsState.collectAsStateWithLifecycle()
+    val rankedCreators by viewModel.rankedCreatorsState.collectAsStateWithLifecycle()
     val transactionsState by viewModel.transactionsState.collectAsStateWithLifecycle()
     val activeStreamState by viewModel.activeStreamState.collectAsStateWithLifecycle()
     val activeMessagesState by viewModel.activeMessagesState.collectAsStateWithLifecycle()
+    val activeSeatsState by viewModel.activePartySeatsState.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategory.collectAsStateWithLifecycle()
+    val followingOnly by viewModel.followingOnly.collectAsStateWithLifecycle()
+    val partyOnly by viewModel.partyOnly.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
 
@@ -264,10 +278,16 @@ private fun AuthenticatedPopLiveShell(currentUserId: String) {
                         LiveDiscoveryScreen(
                             profileState = profileState,
                             streamsState = streamsState,
+                            followingState = followingState,
                             selectedCategory = selectedCategory,
+                            followingOnly = followingOnly,
+                            partyOnly = partyOnly,
                             searchQuery = searchQuery,
                             isBusy = isBusy,
                             onSelectCategory = viewModel::selectCategory,
+                            onToggleFollowingOnly = viewModel::toggleFollowingOnly,
+                            onTogglePartyOnly = viewModel::togglePartyOnly,
+                            onResetFilters = viewModel::resetDiscoveryFilters,
                             onSearchQueryChange = viewModel::updateSearchQuery,
                             onWatchStream = { stream ->
                                 viewModel.setActiveStream(stream.id)
@@ -279,14 +299,30 @@ private fun AuthenticatedPopLiveShell(currentUserId: String) {
                         )
                     }
 
+                    composable(NavRoutes.RANKINGS) {
+                        val followingList = (followingState as? UiState.Success)?.data ?: emptyList()
+                        RankingsScreen(
+                            creators = rankedCreators,
+                            following = followingList,
+                            isBusy = isBusy,
+                            onWatchStreamId = { streamId ->
+                                viewModel.setActiveStream(streamId)
+                                navController.navigate(NavRoutes.liveRoom(streamId))
+                            },
+                            onToggleFollow = viewModel::toggleFollow,
+                            onLaunchDemoRooms = viewModel::launchDemoStreams,
+                        )
+                    }
+
                     composable(NavRoutes.GO_LIVE) {
                         GoLiveStudioScreen(
                             isBusy = isBusy,
-                            onStartBroadcast = { title, category, pkActive, opponent ->
+                            onStartBroadcast = { title, category, pkActive, partyMode, opponent ->
                                 viewModel.startBroadcast(
                                     title = title,
                                     category = category,
                                     pkActive = pkActive,
+                                    partyMode = partyMode,
                                     pkOpponent = opponent,
                                 ) { streamId ->
                                     navController.navigate(NavRoutes.liveRoom(streamId))
@@ -328,10 +364,17 @@ private fun AuthenticatedPopLiveShell(currentUserId: String) {
                             profileState = profileState,
                             streamState = activeStreamState,
                             messagesState = activeMessagesState,
+                            seatsState = activeSeatsState,
+                            followingState = followingState,
                             onSendMessage = viewModel::sendChatMessage,
                             onSendLike = viewModel::sendLike,
                             onSendGift = viewModel::sendGift,
                             onTogglePk = viewModel::togglePk,
+                            onTogglePartyMode = viewModel::togglePartyMode,
+                            onToggleFollow = viewModel::toggleFollow,
+                            onClaimSeat = viewModel::claimPartySeat,
+                            onToggleSeatMute = viewModel::toggleSeatMute,
+                            onLeaveSeat = { sid, seat -> viewModel.leavePartySeat(sid, seat.id) },
                             onEndBroadcast = viewModel::endBroadcast,
                             onAdjustViewer = viewModel::adjustViewerCount,
                             onGoToWallet = { navigateTopLevel(NavRoutes.WALLET) },

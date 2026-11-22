@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Videocam
@@ -79,6 +80,7 @@ fun GoLiveStudioScreen(
         title: String,
         category: StreamCategory,
         pkActive: Boolean,
+        partyMode: Boolean,
         pkOpponent: String,
     ) -> Unit,
     modifier: Modifier = Modifier,
@@ -121,6 +123,7 @@ fun GoLiveStudioScreen(
     var title by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf(StreamCategory.MUSIC) }
     var pkBattleEnabled by remember { mutableStateOf(false) }
+    var partyModeEnabled by remember { mutableStateOf(false) }
     var opponentName by remember { mutableStateOf("Challenger Star") }
 
     val micLevel = rememberMicrophoneLevel(
@@ -194,7 +197,6 @@ fun GoLiveStudioScreen(
             }
         }
 
-        // Gradient scrim for top & bottom studio controls
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -209,7 +211,6 @@ fun GoLiveStudioScreen(
                 )
         )
 
-        // Top studio control strip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -291,7 +292,6 @@ fun GoLiveStudioScreen(
             }
         }
 
-        // Bottom setup card
         Surface(
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = VelvetSurface.copy(alpha = 0.94f),
@@ -301,10 +301,9 @@ fun GoLiveStudioScreen(
                 .fillMaxWidth(),
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                // Studio filter pills
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(end = 8.dp),
@@ -363,6 +362,32 @@ fun GoLiveStudioScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
+                            imageVector = Icons.Filled.Groups,
+                            contentDescription = null,
+                            tint = ElectricCyan,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "6-Seat Party Room Stage",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                    Switch(
+                        checked = partyModeEnabled,
+                        onCheckedChange = { partyModeEnabled = it },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ElectricCyan),
+                        modifier = Modifier.testTag("studio_party_switch"),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
                             imageVector = Icons.Filled.Bolt,
                             contentDescription = null,
                             tint = WarmGold,
@@ -395,7 +420,13 @@ fun GoLiveStudioScreen(
 
                 Button(
                     onClick = {
-                        onStartBroadcast(title, selectedCategory, pkBattleEnabled, opponentName)
+                        onStartBroadcast(
+                            title,
+                            selectedCategory,
+                            pkBattleEnabled,
+                            partyModeEnabled,
+                            opponentName,
+                        )
                     },
                     enabled = !isBusy,
                     shape = CircleShape,

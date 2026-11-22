@@ -1,10 +1,12 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Bolt
@@ -28,6 +29,8 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VolumeOff
@@ -46,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,14 +62,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.R
+import com.example.model.FollowedHost
 import com.example.model.GiftCatalogItem
 import com.example.model.LiveStream
 import com.example.model.MessageType
+import com.example.model.PartySeat
 import com.example.model.StreamMessage
 import com.example.model.StreamStatus
 import com.example.model.UiState
@@ -74,7 +79,10 @@ import com.example.ui.components.FloatingGiftBanner
 import com.example.ui.components.FloatingHeartsOverlay
 import com.example.ui.components.GiftPickerBottomSheet
 import com.example.ui.components.LiveChatFeed
+import com.example.ui.components.MegaGiftStageOverlay
+import com.example.ui.components.PartySeatsGrid
 import com.example.ui.components.PkBattleProgressBar
+import com.example.ui.components.QuickReactionBar
 import com.example.ui.theme.CoralPink
 import com.example.ui.theme.CosmicObsidian
 import com.example.ui.theme.ElectricCyan
@@ -82,6 +90,7 @@ import com.example.ui.theme.WarmGold
 import com.example.ui.video.CameraBroadcasterPreview
 import com.example.ui.video.LiveVideoPlayer
 import com.example.ui.video.StudioFilter
+import kotlinx.coroutines.delay
 
 @Composable
 fun LiveRoomScreen(
@@ -89,10 +98,17 @@ fun LiveRoomScreen(
     profileState: UiState<UserProfile?>,
     streamState: UiState<LiveStream?>,
     messagesState: UiState<List<StreamMessage>>,
+    seatsState: UiState<List<PartySeat>>,
+    followingState: UiState<List<FollowedHost>>,
     onSendMessage: (LiveStream, String) -> Unit,
     onSendLike: (LiveStream) -> Unit,
     onSendGift: (LiveStream, GiftCatalogItem, Int) -> Unit,
     onTogglePk: (LiveStream, Boolean) -> Unit,
+    onTogglePartyMode: (LiveStream, Boolean) -> Unit,
+    onToggleFollow: (hostId: String, hostName: String, hostLevel: Long) -> Unit,
+    onClaimSeat: (LiveStream, Long) -> Unit,
+    onToggleSeatMute: (String, PartySeat) -> Unit,
+    onLeaveSeat: (String, PartySeat) -> Unit,
     onEndBroadcast: (String, () -> Unit) -> Unit,
     onAdjustViewer: (LiveStream, Long) -> Unit,
     onGoToWallet: () -> Unit,
@@ -107,12 +123,27 @@ fun LiveRoomScreen(
     var showEndSummary by remember { mutableStateOf<LiveStream?>(null) }
     var chatDraft by remember { mutableStateOf("") }
     var heartTrigger by remember { mutableIntStateOf(0) }
+    var elapsedSeconds by remember { mutableIntStateOf(0) }
 
     val stream = (streamState as? UiState.Success)?.data
     val messages = (messagesState as? UiState.Success)?.data ?: emptyList()
+    val seats = (seatsState as? UiState.Success)?.data ?: emptyList()
+    val followed = (followingState as? UiState.Success)?.data ?: emptyList()
     val profile = (profileState as? UiState.Success)?.data
     val latestGiftMessage = remember(messages) {
         messages.lastOrNull { it.messageTypeEnum() == MessageType.GIFT }
+    }
+    val isFollowingHost = remember(followed, stream?.hostId) {
+        stream != null && followed.any { it.hostId == stream.hostId }
+    }
+
+    LaunchedEffect(stream?.id, stream?.status) {
+        if (stream?.statusEnum() == StreamStatus.LIVE) {
+            while (true) {
+                delay(1000L)
+                elapsedSeconds += 1
+            }
+        }
     }
 
     val hasCameraPermission = remember(context) {
@@ -172,7 +203,6 @@ fun LiveRoomScreen(
                 )
             }
 
-            // Readability gradient overlay
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -182,13 +212,14 @@ fun LiveRoomScreen(
                                 Color(0x880B0714),
                                 Color.Transparent,
                                 Color.Transparent,
-                                Color(0xCC0B0714),
+                                Color(0xD40B0714),
                             )
                         )
                     )
             )
 
             FloatingHeartsOverlay(triggerCount = heartTrigger)
+            MegaGiftStageOverlay(giftMessage = latestGiftMessage)
 
             Column(
                 modifier = Modifier
@@ -200,7 +231,7 @@ fun LiveRoomScreen(
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
                 // Top HUD
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -208,13 +239,13 @@ fun LiveRoomScreen(
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = CosmicObsidian.copy(alpha = 0.7f),
+                            color = CosmicObsidian.copy(alpha = 0.72f),
                             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
                             modifier = Modifier.weight(1f, fill = false),
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             ) {
                                 Surface(
                                     shape = CircleShape,
@@ -230,7 +261,7 @@ fun LiveRoomScreen(
                                     }
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Column {
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
                                     Text(
                                         text = stream.hostName,
                                         style = MaterialTheme.typography.labelLarge,
@@ -238,34 +269,53 @@ fun LiveRoomScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    val mins = elapsedSeconds / 60
+                                    val secs = elapsedSeconds % 60
                                     Text(
-                                        text = "Lv.${stream.hostLevel} • ${stream.totalGiftsCoins} coins",
+                                        text = "Lv.${stream.hostLevel} • ${"%02d:%02d".format(mins, secs)}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = WarmGold,
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isFollowingHost) Color.White.copy(alpha = 0.16f) else CoralPink,
+                                    modifier = Modifier
+                                        .clickable {
+                                            onToggleFollow(stream.hostId, stream.hostName, stream.hostLevel)
+                                        }
+                                        .testTag("room_follow_button"),
+                                ) {
+                                    Text(
+                                        text = if (isFollowingHost) "Following" else "+ Follow",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                                     )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
                             Surface(
                                 shape = CircleShape,
-                                color = CosmicObsidian.copy(alpha = 0.7f),
+                                color = CosmicObsidian.copy(alpha = 0.72f),
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Visibility,
                                         contentDescription = "Viewers",
                                         tint = ElectricCyan,
-                                        modifier = Modifier.size(15.dp),
+                                        modifier = Modifier.size(14.dp),
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
@@ -279,7 +329,7 @@ fun LiveRoomScreen(
                             if (stream.hostId == currentUserId && stream.statusEnum() == StreamStatus.LIVE) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = if (stream.pkActive) WarmGold else CosmicObsidian.copy(alpha = 0.7f),
+                                    color = if (stream.pkActive) WarmGold else CosmicObsidian.copy(alpha = 0.72f),
                                     onClick = { onTogglePk(stream, !stream.pkActive) },
                                     modifier = Modifier.testTag("room_toggle_pk_button"),
                                 ) {
@@ -287,7 +337,20 @@ fun LiveRoomScreen(
                                         imageVector = Icons.Filled.Bolt,
                                         contentDescription = "Toggle PK Battle",
                                         tint = if (stream.pkActive) CosmicObsidian else WarmGold,
-                                        modifier = Modifier.padding(9.dp).size(20.dp),
+                                        modifier = Modifier.padding(8.dp).size(18.dp),
+                                    )
+                                }
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (stream.partyMode) ElectricCyan else CosmicObsidian.copy(alpha = 0.72f),
+                                    onClick = { onTogglePartyMode(stream, !stream.partyMode) },
+                                    modifier = Modifier.testTag("room_toggle_party_button"),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Groups,
+                                        contentDescription = "Toggle Party Stage",
+                                        tint = if (stream.partyMode) CosmicObsidian else ElectricCyan,
+                                        modifier = Modifier.padding(8.dp).size(18.dp),
                                     )
                                 }
                             }
@@ -295,7 +358,7 @@ fun LiveRoomScreen(
                             if (isLocalHostCamera) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = CosmicObsidian.copy(alpha = 0.7f),
+                                    color = CosmicObsidian.copy(alpha = 0.72f),
                                     onClick = { useFrontCamera = !useFrontCamera },
                                     modifier = Modifier.testTag("room_flip_camera_button"),
                                 ) {
@@ -303,13 +366,13 @@ fun LiveRoomScreen(
                                         imageVector = Icons.Filled.Cameraswitch,
                                         contentDescription = "Flip camera",
                                         tint = Color.White,
-                                        modifier = Modifier.padding(9.dp).size(20.dp),
+                                        modifier = Modifier.padding(8.dp).size(18.dp),
                                     )
                                 }
                             } else {
                                 Surface(
                                     shape = CircleShape,
-                                    color = CosmicObsidian.copy(alpha = 0.7f),
+                                    color = CosmicObsidian.copy(alpha = 0.72f),
                                     onClick = { isMuted = !isMuted },
                                     modifier = Modifier.testTag("room_mute_button"),
                                 ) {
@@ -317,14 +380,37 @@ fun LiveRoomScreen(
                                         imageVector = if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
                                         contentDescription = "Mute audio",
                                         tint = Color.White,
-                                        modifier = Modifier.padding(9.dp).size(20.dp),
+                                        modifier = Modifier.padding(8.dp).size(18.dp),
                                     )
                                 }
                             }
 
                             Surface(
                                 shape = CircleShape,
-                                color = CosmicObsidian.copy(alpha = 0.7f),
+                                color = CosmicObsidian.copy(alpha = 0.72f),
+                                onClick = {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(
+                                            Intent.EXTRA_TEXT,
+                                            "Join ${stream.hostName}'s live room \"${stream.title}\" on PopLive!",
+                                        )
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share Live Room"))
+                                },
+                                modifier = Modifier.testTag("room_share_button"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Share,
+                                    contentDescription = "Share room",
+                                    tint = Color.White,
+                                    modifier = Modifier.padding(8.dp).size(18.dp),
+                                )
+                            }
+
+                            Surface(
+                                shape = CircleShape,
+                                color = CosmicObsidian.copy(alpha = 0.72f),
                                 onClick = {
                                     if (stream.hostId == currentUserId && stream.statusEnum() == StreamStatus.LIVE) {
                                         showEndSummary = stream
@@ -338,7 +424,7 @@ fun LiveRoomScreen(
                                     imageVector = if (stream.hostId == currentUserId) Icons.Filled.StopCircle else Icons.Filled.Close,
                                     contentDescription = "Leave room",
                                     tint = if (stream.hostId == currentUserId) CoralPink else Color.White,
-                                    modifier = Modifier.padding(9.dp).size(20.dp),
+                                    modifier = Modifier.padding(8.dp).size(18.dp),
                                 )
                             }
                         }
@@ -353,14 +439,29 @@ fun LiveRoomScreen(
                         )
                     }
 
+                    if (stream.partyMode) {
+                        PartySeatsGrid(
+                            seats = seats,
+                            currentUserId = currentUserId,
+                            hostId = stream.hostId,
+                            onClaimSeat = { seatNum -> onClaimSeat(stream, seatNum) },
+                            onToggleMute = { seat -> onToggleSeatMute(stream.id, seat) },
+                            onLeaveSeat = { seat -> onLeaveSeat(stream.id, seat) },
+                        )
+                    }
+
                     FloatingGiftBanner(giftMessage = latestGiftMessage)
                 }
 
                 // Bottom Chat & Engagement Dock
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     LiveChatFeed(
                         messages = messages,
-                        modifier = Modifier.fillMaxWidth(0.84f),
+                        modifier = Modifier.fillMaxWidth(0.86f),
+                    )
+
+                    QuickReactionBar(
+                        onReact = { reaction -> onSendMessage(stream, reaction) },
                     )
 
                     Row(
@@ -380,8 +481,8 @@ fun LiveRoomScreen(
                             singleLine = true,
                             shape = CircleShape,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = CosmicObsidian.copy(alpha = 0.75f),
-                                unfocusedContainerColor = CosmicObsidian.copy(alpha = 0.65f),
+                                focusedContainerColor = CosmicObsidian.copy(alpha = 0.78f),
+                                unfocusedContainerColor = CosmicObsidian.copy(alpha = 0.68f),
                                 focusedBorderColor = CoralPink,
                                 unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
                                 focusedTextColor = Color.White,

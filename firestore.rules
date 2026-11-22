@@ -51,6 +51,14 @@ service cloud.firestore {
              data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
+    function isValidFollowedHost(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.hostId is string && isValidId(data.hostId) &&
+             data.hostName is string && data.hostName.size() >= 1 && data.hostName.size() <= 40 &&
+             data.hostLevel is int && data.hostLevel >= 1 && data.hostLevel <= 999 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     function isValidLiveStream(data) {
       return data.hostId is string && data.hostId.size() >= 1 && data.hostId.size() <= 128 &&
              data.hostName is string && data.hostName.size() >= 1 && data.hostName.size() <= 40 &&
@@ -63,6 +71,7 @@ service cloud.firestore {
              data.visibility in ['PUBLIC', 'PRIVATE'] &&
              data.status in ['LIVE', 'ENDED'] &&
              data.pkActive is bool &&
+             (!('partyMode' in data) || data.partyMode is bool) &&
              (!('pkOpponentName' in data) || (data.pkOpponentName is string && data.pkOpponentName.size() <= 40)) &&
              data.pkHostScore is int && data.pkHostScore >= 0 && data.pkHostScore <= 100000000 &&
              data.pkOpponentScore is int && data.pkOpponentScore >= 0 && data.pkOpponentScore <= 100000000 &&
@@ -85,6 +94,19 @@ service cloud.firestore {
              (!('giftName' in data) || (data.giftName is string && data.giftName.size() <= 40)) &&
              (!('giftCoins' in data) || (data.giftCoins is int && data.giftCoins >= 0 && data.giftCoins <= 1000000)) &&
              data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidPartySeat(data) {
+      return data.streamId is string && isValidId(data.streamId) &&
+             data.streamVisibility in ['PUBLIC', 'PRIVATE'] &&
+             data.hostId is string && data.hostId.size() >= 1 && data.hostId.size() <= 128 &&
+             data.seatNumber is int && data.seatNumber >= 1 && data.seatNumber <= 6 &&
+             data.occupantId is string && data.occupantId.size() >= 1 && data.occupantId.size() <= 128 &&
+             data.occupantName is string && data.occupantName.size() >= 1 && data.occupantName.size() <= 40 &&
+             data.occupantLevel is int && data.occupantLevel >= 1 && data.occupantLevel <= 999 &&
+             data.micMuted is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     // 1. User profiles (strictly owner-isolated to protect PII and wallet balances)
@@ -138,9 +160,26 @@ service cloud.firestore {
 
         allow update, delete: if false;
       }
+
+      // 3. Owner-only followed hosts
+      match /following/{targetHostId} {
+        allow get: if isOwner(userId) && isValidId(targetHostId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(targetHostId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().hostId == targetHostId &&
+                         incoming().keys().hasAll(['userId', 'hostId', 'hostName', 'hostLevel', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'hostId', 'hostName', 'hostLevel', 'createdAt']) &&
+                         isValidFollowedHost(incoming());
+
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(targetHostId);
+      }
     }
 
-    // 3. Live broadcast rooms
+    // 4. Live broadcast rooms
     match /live_streams/{streamId} {
       allow get: if isSignedIn() && isValidId(streamId) &&
                     (existing().visibility == 'PUBLIC' || existing().hostId == request.auth.uid);
@@ -159,7 +198,7 @@ service cloud.firestore {
                        ]) &&
                        incoming().keys().hasOnly([
                          'hostId', 'hostName', 'hostAvatarUrl', 'hostLevel', 'title', 'category',
-                         'coverKey', 'streamUrl', 'visibility', 'status', 'pkActive',
+                         'coverKey', 'streamUrl', 'visibility', 'status', 'pkActive', 'partyMode',
                          'pkOpponentName', 'pkHostScore', 'pkOpponentScore', 'viewerCount',
                          'totalGiftsCoins', 'likeCount', 'createdAt', 'updatedAt'
                        ]) &&
@@ -172,11 +211,11 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        existing().status == 'LIVE' &&
                        (
-                         // Action 1: Host updates room metadata, PK state, or ends stream
+                         // Action 1: Host updates room metadata, PK state, party mode, or ends stream
                          (
                            existing().hostId == request.auth.uid &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
-                             'title', 'category', 'visibility', 'status', 'pkActive',
+                             'title', 'category', 'visibility', 'status', 'pkActive', 'partyMode',
                              'pkOpponentName', 'pkHostScore', 'pkOpponentScore', 'streamUrl', 'updatedAt'
                            ])
                          ) ||
@@ -194,7 +233,7 @@ service cloud.firestore {
 
       allow delete: if isSignedIn() && isValidId(streamId) && existing().hostId == request.auth.uid;
 
-      // 4. Real-time chat & virtual gift feed inside a live stream room
+      // 5. Real-time chat & virtual gift feed inside a live stream room
       match /messages/{messageId} {
         allow get: if isSignedIn() && isValidId(streamId) && isValidId(messageId) &&
                       (existing().streamVisibility == 'PUBLIC' || existing().hostId == request.auth.uid);
@@ -220,6 +259,48 @@ service cloud.firestore {
                          exists(/databases/$(database)/documents/live_streams/$(streamId));
 
         allow update, delete: if false;
+      }
+
+      // 6. Multi-guest party seats inside a live stream room
+      match /seats/{seatId} {
+        allow get: if isSignedIn() && isValidId(streamId) && isValidId(seatId) &&
+                      (existing().streamVisibility == 'PUBLIC' || existing().hostId == request.auth.uid);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.streamVisibility == 'PUBLIC' || resource.data.hostId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(streamId) &&
+                         isValidId(seatId) &&
+                         incoming().occupantId == request.auth.uid &&
+                         incoming().streamId == streamId &&
+                         incoming().keys().hasAll([
+                           'streamId', 'streamVisibility', 'hostId', 'seatNumber',
+                           'occupantId', 'occupantName', 'occupantLevel', 'micMuted',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'streamId', 'streamVisibility', 'hostId', 'seatNumber',
+                           'occupantId', 'occupantName', 'occupantLevel', 'micMuted',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidPartySeat(incoming()) &&
+                         exists(/databases/$(database)/documents/live_streams/$(streamId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(streamId) &&
+                         isValidId(seatId) &&
+                         isValidPartySeat(incoming()) &&
+                         incoming().streamId == existing().streamId &&
+                         incoming().occupantId == existing().occupantId &&
+                         incoming().createdAt == existing().createdAt &&
+                         (existing().occupantId == request.auth.uid || existing().hostId == request.auth.uid) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['micMuted', 'updatedAt']);
+
+        allow delete: if isSignedIn() &&
+                         isValidId(streamId) &&
+                         isValidId(seatId) &&
+                         (existing().occupantId == request.auth.uid || existing().hostId == request.auth.uid);
       }
     }
   }

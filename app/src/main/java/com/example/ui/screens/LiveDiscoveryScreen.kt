@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.model.FollowedHost
 import com.example.model.LiveStream
 import com.example.model.StreamCategory
 import com.example.model.StreamStatus
@@ -83,10 +85,16 @@ import com.example.ui.video.coverDrawableForKey
 fun LiveDiscoveryScreen(
     profileState: UiState<UserProfile?>,
     streamsState: UiState<List<LiveStream>>,
+    followingState: UiState<List<FollowedHost>>,
     selectedCategory: StreamCategory?,
+    followingOnly: Boolean,
+    partyOnly: Boolean,
     searchQuery: String,
     isBusy: Boolean,
     onSelectCategory: (StreamCategory?) -> Unit,
+    onToggleFollowingOnly: () -> Unit,
+    onTogglePartyOnly: () -> Unit,
+    onResetFilters: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onWatchStream: (LiveStream) -> Unit,
     onGoLiveClick: () -> Unit,
@@ -96,6 +104,9 @@ fun LiveDiscoveryScreen(
 ) {
     var searchExpanded by remember { mutableStateOf(false) }
     val coinBalance = (profileState as? UiState.Success)?.data?.coinBalance ?: 0L
+    val followedHostIds = remember(followingState) {
+        ((followingState as? UiState.Success)?.data ?: emptyList()).map { it.hostId }.toSet()
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         // Branded Header
@@ -127,7 +138,7 @@ fun LiveDiscoveryScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = "Live Video Stages",
+                        text = "Live Video & Party Stages",
                         style = MaterialTheme.typography.labelSmall,
                         color = ElectricCyan,
                     )
@@ -184,7 +195,7 @@ fun LiveDiscoveryScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
-                placeholder = { Text("Search hosts, titles, PK rooms...") },
+                placeholder = { Text("Search hosts, titles, PK or party rooms...") },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -200,21 +211,45 @@ fun LiveDiscoveryScreen(
             )
         }
 
-        // Category Filter Row
+        // Category & Mode Filter Row
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 FilterChip(
-                    selected = selectedCategory == null,
-                    onClick = { onSelectCategory(null) },
+                    selected = selectedCategory == null && !followingOnly && !partyOnly,
+                    onClick = onResetFilters,
                     label = { Text("All Hot") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = CoralPink,
                         selectedLabelColor = Color.White,
                     ),
                     modifier = Modifier.testTag("filter_all"),
+                )
+            }
+            item {
+                FilterChip(
+                    selected = partyOnly,
+                    onClick = onTogglePartyOnly,
+                    label = { Text("Party 6-Seat") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = ElectricCyan,
+                        selectedLabelColor = CosmicObsidian,
+                    ),
+                    modifier = Modifier.testTag("filter_party"),
+                )
+            }
+            item {
+                FilterChip(
+                    selected = followingOnly,
+                    onClick = onToggleFollowingOnly,
+                    label = { Text("Following") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = WarmGold,
+                        selectedLabelColor = CosmicObsidian,
+                    ),
+                    modifier = Modifier.testTag("filter_following"),
                 )
             }
             items(StreamCategory.entries) { category ->
@@ -255,18 +290,27 @@ fun LiveDiscoveryScreen(
             }
 
             is UiState.Success -> {
-                val filtered = remember(streamsState.data, selectedCategory, searchQuery) {
+                val filtered = remember(
+                    streamsState.data,
+                    selectedCategory,
+                    followingOnly,
+                    partyOnly,
+                    followedHostIds,
+                    searchQuery,
+                ) {
                     streamsState.data.filter { stream ->
                         val matchesCat = when (selectedCategory) {
                             null -> true
                             StreamCategory.PK -> stream.pkActive || stream.category == StreamCategory.PK.wireValue
                             else -> stream.category == selectedCategory.wireValue
                         }
+                        val matchesFollowing = !followingOnly || stream.hostId in followedHostIds
+                        val matchesParty = !partyOnly || stream.partyMode
                         val q = searchQuery.trim()
                         val matchesQuery = q.isEmpty() ||
                             stream.title.contains(q, ignoreCase = true) ||
                             stream.hostName.contains(q, ignoreCase = true)
-                        matchesCat && matchesQuery
+                        matchesCat && matchesFollowing && matchesParty && matchesQuery
                     }
                 }
 
@@ -276,10 +320,7 @@ fun LiveDiscoveryScreen(
                         hasAnyStreams = streamsState.data.isNotEmpty(),
                         onGoLiveClick = onGoLiveClick,
                         onLaunchDemoRooms = onLaunchDemoRooms,
-                        onResetFilters = {
-                            onSelectCategory(null)
-                            onSearchQueryChange("")
-                        },
+                        onResetFilters = onResetFilters,
                     )
                 } else {
                     val spotlight = filtered.first()
@@ -373,6 +414,28 @@ private fun SpotlightLiveHeroCard(
                                 )
                                 Text(
                                     text = "PK LIVE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CosmicObsidian,
+                                )
+                            }
+                        }
+                    }
+                    if (stream.partyMode) {
+                        Surface(shape = CircleShape, color = ElectricCyan) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Groups,
+                                    contentDescription = null,
+                                    tint = CosmicObsidian,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "PARTY",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = CosmicObsidian,
@@ -500,6 +563,12 @@ private fun LiveRoomGridCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = WarmGold,
                     )
+                } else if (stream.partyMode) {
+                    Text(
+                        text = "PARTY 6-SEAT",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ElectricCyan,
+                    )
                 }
                 Text(
                     text = stream.title,
@@ -603,9 +672,9 @@ private fun EmptyLiveFeedCard(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = if (hasAnyStreams) {
-                        "Try clearing your category or search filter to discover live broadcasts."
+                        "Try clearing your category or following filter to discover live broadcasts."
                     } else {
-                        "Open your real-time CameraX studio to broadcast live, or launch featured video streams with live chat and PK battles."
+                        "Open your real-time CameraX studio to broadcast live, or launch featured video & party rooms with live chat and PK battles."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

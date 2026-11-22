@@ -3,9 +3,11 @@ package com.example.data
 import android.content.Context
 import com.example.R
 import com.example.model.CoinTransaction
+import com.example.model.FollowedHost
 import com.example.model.GiftCatalogItem
 import com.example.model.LiveStream
 import com.example.model.MessageType
+import com.example.model.PartySeat
 import com.example.model.StreamCategory
 import com.example.model.StreamMessage
 import com.example.model.StreamStatus
@@ -104,6 +106,32 @@ class PopLiveRepository(
         )
     }
 
+    fun observeFollowingHosts(userId: String): Flow<List<FollowedHost>> = flow {
+        val uid = requireUserId()
+        check(uid == userId) { "Refusing cross-user following observation." }
+        val path = "users/$userId/following"
+        emitAll(
+            db.collection("users")
+                .document(userId)
+                .collection("following")
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        FollowedHost::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    )
+                }
+                .catch { error ->
+                    val fsError = unwrapFirestoreException(error)
+                    if (fsError == null && error is CancellationException) throw error
+                    if (auth.currentUser?.uid == uid) {
+                        handleFirestoreError(fsError ?: error, OperationType.LIST, path)
+                    }
+                    throw error
+                }
+        )
+    }
+
     fun observePublicLiveStreams(): Flow<List<LiveStream>> = flow {
         val uid = requireUserId()
         val path = "live_streams"
@@ -185,6 +213,32 @@ class PopLiveRepository(
         )
     }
 
+    fun observePartySeats(streamId: String): Flow<List<PartySeat>> = flow {
+        val uid = requireUserId()
+        val path = "live_streams/$streamId/seats"
+        emitAll(
+            db.collection("live_streams")
+                .document(streamId)
+                .collection("seats")
+                .whereEqualTo("streamVisibility", StreamVisibility.PUBLIC.wireValue)
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        PartySeat::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedBy { it.seatNumber }
+                }
+                .catch { error ->
+                    val fsError = unwrapFirestoreException(error)
+                    if (fsError == null && error is CancellationException) throw error
+                    if (auth.currentUser?.uid == uid) {
+                        handleFirestoreError(fsError ?: error, OperationType.LIST, path)
+                    }
+                    throw error
+                }
+        )
+    }
+
     suspend fun ensureUserProfile(
         userId: String,
         displayName: String?,
@@ -253,11 +307,64 @@ class PopLiveRepository(
         }
     }
 
+    suspend fun toggleFollowHost(
+        profile: UserProfile,
+        hostId: String,
+        hostName: String,
+        hostLevel: Long,
+        currentlyFollowing: Boolean,
+    ): Result<Boolean> {
+        val path = "users/${profile.userId}/following/$hostId"
+        return try {
+            val uid = requireUserId()
+            val userRef = db.collection("users").document(uid)
+            val followRef = userRef.collection("following").document(hostId)
+            val batch = db.batch()
+            if (currentlyFollowing) {
+                batch.delete(followRef)
+                val nextCount = (profile.followingCount - 1L).coerceAtLeast(0L)
+                batch.update(
+                    userRef,
+                    mapOf(
+                        "followingCount" to nextCount,
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                    )
+                )
+            } else {
+                batch.set(
+                    followRef,
+                    mapOf(
+                        "userId" to uid,
+                        "hostId" to hostId,
+                        "hostName" to hostName.trim().ifEmpty { "PopLive Star" }.take(40),
+                        "hostLevel" to hostLevel.coerceIn(1L, 999L),
+                        "createdAt" to FieldValue.serverTimestamp(),
+                    )
+                )
+                batch.update(
+                    userRef,
+                    mapOf(
+                        "followingCount" to FieldValue.increment(1L),
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                    )
+                )
+            }
+            batch.commit().await()
+            Result.success(!currentlyFollowing)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
     suspend fun createLiveStream(
         profile: UserProfile,
         title: String,
         category: StreamCategory,
         pkActive: Boolean,
+        partyMode: Boolean,
         pkOpponentName: String?,
         streamUrl: String = "",
         coverKey: String = "camera",
@@ -285,6 +392,7 @@ class PopLiveRepository(
                 "visibility" to StreamVisibility.PUBLIC.wireValue,
                 "status" to StreamStatus.LIVE.wireValue,
                 "pkActive" to pkActive,
+                "partyMode" to partyMode,
                 "pkOpponentName" to if (pkActive) (cleanOpponent ?: "Challenger Team") else null,
                 "pkHostScore" to 0L,
                 "pkOpponentScore" to 0L,
@@ -303,7 +411,11 @@ class PopLiveRepository(
                 "senderName" to cleanHostName,
                 "senderLevel" to profile.level.coerceIn(1L, 999L),
                 "messageType" to MessageType.SYSTEM.wireValue,
-                "body" to "Welcome to $cleanTitle! Tap the heart or send a gift.",
+                "body" to if (partyMode) {
+                    "Party Room is LIVE! Tap any open seat to join the mic stage."
+                } else {
+                    "Welcome to $cleanTitle! Tap the heart or send a gift."
+                },
                 "createdAt" to FieldValue.serverTimestamp(),
             )
 
@@ -332,6 +444,7 @@ class PopLiveRepository(
                     coverKey = "acoustic",
                     streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
                     pkActive = true,
+                    partyMode = false,
                     pkOpponent = "DJ Nova",
                     pkHostScore = 1480L,
                     pkOpponentScore = 1220L,
@@ -347,12 +460,13 @@ class PopLiveRepository(
                     coverKey = "dance",
                     streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
                     pkActive = false,
+                    partyMode = true,
                     pkOpponent = null,
                     pkHostScore = 0L,
                     pkOpponentScore = 0L,
                     viewerCount = 218L,
                     likeCount = 860L,
-                    totalGifts = 980L,
+                    totalGifts = 1420L,
                 ),
                 DemoSeed(
                     title = "Ranked Arena Duo Stream",
@@ -362,6 +476,7 @@ class PopLiveRepository(
                     coverKey = "gaming",
                     streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
                     pkActive = true,
+                    partyMode = false,
                     pkOpponent = "Apex Squad",
                     pkHostScore = 3100L,
                     pkOpponentScore = 2740L,
@@ -370,19 +485,20 @@ class PopLiveRepository(
                     totalGifts = 5200L,
                 ),
                 DemoSeed(
-                    title = "Late Night Lounge Talk",
+                    title = "Late Night Lounge Party",
                     hostAlias = hostName,
                     hostLevel = profile.level.coerceIn(1L, 999L),
                     category = StreamCategory.TALK,
                     coverKey = "talkshow",
                     streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoy.mp4",
                     pkActive = false,
+                    partyMode = true,
                     pkOpponent = null,
                     pkHostScore = 0L,
                     pkOpponentScore = 0L,
-                    viewerCount = 129L,
-                    likeCount = 430L,
-                    totalGifts = 620L,
+                    viewerCount = 186L,
+                    likeCount = 630L,
+                    totalGifts = 880L,
                 ),
             )
 
@@ -400,6 +516,7 @@ class PopLiveRepository(
                     "visibility" to StreamVisibility.PUBLIC.wireValue,
                     "status" to StreamStatus.LIVE.wireValue,
                     "pkActive" to seed.pkActive,
+                    "partyMode" to seed.partyMode,
                     "pkOpponentName" to seed.pkOpponent,
                     "pkHostScore" to seed.pkHostScore,
                     "pkOpponentScore" to seed.pkOpponentScore,
@@ -422,7 +539,11 @@ class PopLiveRepository(
                         "senderName" to seed.hostAlias.take(40),
                         "senderLevel" to seed.hostLevel,
                         "messageType" to MessageType.SYSTEM.wireValue,
-                        "body" to "Room is LIVE! Say hello in chat or launch a gift combo.",
+                        "body" to if (seed.partyMode) {
+                            "Party stage open! Claim a mic seat or drop a gift combo."
+                        } else {
+                            "Room is LIVE! Say hello in chat or launch a gift combo."
+                        },
                         "createdAt" to FieldValue.serverTimestamp(),
                     )
                 )
@@ -433,6 +554,108 @@ class PopLiveRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, "live_streams")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun claimPartySeat(
+        stream: LiveStream,
+        profile: UserProfile,
+        seatNumber: Long,
+    ): Result<Unit> {
+        val seatId = "seat_$seatNumber"
+        val path = "live_streams/${stream.id}/seats/$seatId"
+        return try {
+            val uid = requireUserId()
+            require(seatNumber in 1L..6L) { "Invalid seat number" }
+            db.collection("live_streams")
+                .document(stream.id)
+                .collection("seats")
+                .document(seatId)
+                .set(
+                    mapOf(
+                        "streamId" to stream.id,
+                        "streamVisibility" to stream.visibility,
+                        "hostId" to stream.hostId,
+                        "seatNumber" to seatNumber,
+                        "occupantId" to uid,
+                        "occupantName" to profile.displayName.trim().ifEmpty { "Guest" }.take(40),
+                        "occupantLevel" to profile.level.coerceIn(1L, 999L),
+                        "micMuted" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                    )
+                ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun toggleSeatMute(streamId: String, seat: PartySeat): Result<Unit> {
+        val path = "live_streams/$streamId/seats/${seat.id}"
+        return try {
+            requireUserId()
+            db.collection("live_streams")
+                .document(streamId)
+                .collection("seats")
+                .document(seat.id)
+                .update(
+                    mapOf(
+                        "micMuted" to !seat.micMuted,
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                    )
+                ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun leavePartySeat(streamId: String, seatId: String): Result<Unit> {
+        val path = "live_streams/$streamId/seats/$seatId"
+        return try {
+            requireUserId()
+            db.collection("live_streams")
+                .document(streamId)
+                .collection("seats")
+                .document(seatId)
+                .delete()
+                .await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun togglePartyMode(stream: LiveStream, enabled: Boolean): Result<Unit> {
+        val path = "live_streams/${stream.id}"
+        return try {
+            val uid = requireUserId()
+            check(stream.hostId == uid) { "Only host can toggle party mode." }
+            if (stream.status == StreamStatus.ENDED.wireValue) {
+                return Result.failure(IllegalStateException("Stream has ended."))
+            }
+            db.collection("live_streams").document(stream.id).update(
+                mapOf(
+                    "partyMode" to enabled,
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
         }
     }
@@ -727,6 +950,7 @@ class PopLiveRepository(
         val coverKey: String,
         val streamUrl: String,
         val pkActive: Boolean,
+        val partyMode: Boolean,
         val pkOpponent: String?,
         val pkHostScore: Long,
         val pkOpponentScore: Long,

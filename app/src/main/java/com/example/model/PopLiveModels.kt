@@ -101,6 +101,17 @@ data class CoinTransaction(
 
 @Keep
 @IgnoreExtraProperties
+data class FollowedHost(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val hostId: String = "",
+    val hostName: String = "",
+    val hostLevel: Long = 1L,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+@Keep
+@IgnoreExtraProperties
 data class LiveStream(
     @DocumentId val id: String = "",
     val hostId: String = "",
@@ -114,6 +125,7 @@ data class LiveStream(
     val visibility: String = StreamVisibility.PUBLIC.wireValue,
     val status: String = StreamStatus.LIVE.wireValue,
     val pkActive: Boolean = false,
+    val partyMode: Boolean = false,
     val pkOpponentName: String? = null,
     val pkHostScore: Long = 0L,
     val pkOpponentScore: Long = 0L,
@@ -146,12 +158,38 @@ data class StreamMessage(
     fun messageTypeEnum(): MessageType = MessageType.fromWire(messageType)
 }
 
+@Keep
+@IgnoreExtraProperties
+data class PartySeat(
+    @DocumentId val id: String = "",
+    val streamId: String = "",
+    val streamVisibility: String = StreamVisibility.PUBLIC.wireValue,
+    val hostId: String = "",
+    val seatNumber: Long = 1L,
+    val occupantId: String = "",
+    val occupantName: String = "",
+    val occupantLevel: Long = 1L,
+    val micMuted: Boolean = false,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null,
+)
+
 data class GiftCatalogItem(
     val id: String,
     val name: String,
     val coinCost: Long,
     val badgeTag: String,
     val accentHex: Long,
+)
+
+data class RankedCreator(
+    val hostId: String,
+    val hostName: String,
+    val hostLevel: Long,
+    val coverKey: String,
+    val totalGiftCoins: Long,
+    val totalLikes: Long,
+    val activeStreamId: String?,
 )
 
 object PopLiveGifts {
