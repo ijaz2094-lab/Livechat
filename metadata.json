@@ -1,0 +1,6 @@
+{
+  "name": "PopLive",
+  "description": "Social live video streaming app with real-time CameraX broadcasting, live room discovery, interactive chat, virtual gifts, and PK battles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

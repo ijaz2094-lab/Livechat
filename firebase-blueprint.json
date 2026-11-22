@@ -1,0 +1,142 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user's private PopLive account, wallet balance, and creator stats.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the user." },
+        "displayName": { "type": "string", "description": "Streamer or viewer display name (1..40 chars)." },
+        "bio": { "type": "string", "description": "Short bio shown on profile (0..160 chars)." },
+        "avatarUrl": { "type": "string", "description": "Optional profile photo URL." },
+        "coinBalance": { "type": "integer", "description": "Spendable PopCoins balance." },
+        "diamondsEarned": { "type": "integer", "description": "Total creator diamonds earned." },
+        "level": { "type": "integer", "description": "User broadcaster/gifter level." },
+        "followingCount": { "type": "integer", "description": "Followed hosts count." },
+        "followersCount": { "type": "integer", "description": "Followers count." },
+        "dailyCheckInDay": { "type": "integer", "description": "Current daily reward streak day." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on last update." }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "bio",
+        "coinBalance",
+        "diamondsEarned",
+        "level",
+        "followingCount",
+        "followersCount",
+        "dailyCheckInDay",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CoinTransaction": {
+      "title": "CoinTransaction",
+      "description": "User-scoped coin recharge, daily bonus, and virtual gift ledger entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner UID." },
+        "txType": { "type": "string", "enum": ["RECHARGE", "GIFT_SENT", "GIFT_RECEIVED", "DAILY_BONUS"] },
+        "title": { "type": "string", "description": "Human-readable transaction label." },
+        "coinDelta": { "type": "integer", "description": "Signed coin change." },
+        "streamId": { "type": "string", "description": "Optional associated live stream ID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." }
+      },
+      "required": ["userId", "txType", "title", "coinDelta", "createdAt"]
+    },
+    "LiveStream": {
+      "title": "LiveStream",
+      "description": "Real-time live video broadcast room with PK battle scores and engagement counters.",
+      "type": "object",
+      "properties": {
+        "hostId": { "type": "string", "description": "Host Firebase Auth UID." },
+        "hostName": { "type": "string", "description": "Host display name." },
+        "hostAvatarUrl": { "type": "string", "description": "Optional host avatar URL." },
+        "hostLevel": { "type": "integer", "description": "Host level." },
+        "title": { "type": "string", "description": "Broadcast room title." },
+        "category": { "type": "string", "enum": ["MUSIC", "DANCE", "GAMING", "TALK", "PK"] },
+        "coverKey": { "type": "string", "enum": ["acoustic", "dance", "gaming", "talkshow", "camera"] },
+        "streamUrl": { "type": "string", "description": "Video stream URL for ExoPlayer or empty string for local CameraX studio." },
+        "visibility": { "type": "string", "enum": ["PUBLIC", "PRIVATE"] },
+        "status": { "type": "string", "enum": ["LIVE", "ENDED"] },
+        "pkActive": { "type": "boolean", "description": "Whether PK battle mode is active." },
+        "pkOpponentName": { "type": "string", "description": "Optional PK opponent display name." },
+        "pkHostScore": { "type": "integer", "description": "Host PK battle score." },
+        "pkOpponentScore": { "type": "integer", "description": "Opponent PK battle score." },
+        "viewerCount": { "type": "integer", "description": "Active viewer count." },
+        "totalGiftsCoins": { "type": "integer", "description": "Total gift coins received in this stream." },
+        "likeCount": { "type": "integer", "description": "Total hearts received in this stream." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on last update." }
+      },
+      "required": [
+        "hostId",
+        "hostName",
+        "hostLevel",
+        "title",
+        "category",
+        "coverKey",
+        "streamUrl",
+        "visibility",
+        "status",
+        "pkActive",
+        "pkHostScore",
+        "pkOpponentScore",
+        "viewerCount",
+        "totalGiftsCoins",
+        "likeCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StreamMessage": {
+      "title": "StreamMessage",
+      "description": "Real-time chat or virtual gift event inside a live stream room.",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string", "description": "Parent live_streams document ID." },
+        "streamVisibility": { "type": "string", "enum": ["PUBLIC", "PRIVATE"] },
+        "hostId": { "type": "string", "description": "Parent stream host UID." },
+        "senderId": { "type": "string", "description": "Sender UID." },
+        "senderName": { "type": "string", "description": "Sender display name." },
+        "senderLevel": { "type": "integer", "description": "Sender level." },
+        "messageType": { "type": "string", "enum": ["CHAT", "GIFT", "JOIN", "SYSTEM"] },
+        "body": { "type": "string", "description": "Chat text or announcement." },
+        "giftName": { "type": "string", "description": "Optional gift name when messageType is GIFT." },
+        "giftCoins": { "type": "integer", "description": "Optional gift coin value." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." }
+      },
+      "required": [
+        "streamId",
+        "streamVisibility",
+        "hostId",
+        "senderId",
+        "senderName",
+        "senderLevel",
+        "messageType",
+        "body",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-only user profile and wallet state."
+    },
+    "/users/{userId}/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/CoinTransaction" },
+      "description": "Owner-only coin and gift transaction history."
+    },
+    "/live_streams/{streamId}": {
+      "schema": { "$ref": "#/entities/LiveStream" },
+      "description": "Publicly discoverable or private live video stream rooms."
+    },
+    "/live_streams/{streamId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/StreamMessage" },
+      "description": "Real-time chat and virtual gift events inside a stream room."
+    }
+  }
+}

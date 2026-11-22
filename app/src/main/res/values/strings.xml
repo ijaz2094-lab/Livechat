@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">PopLive</string>
+    <string name="action_sign_in_google">Sign in with Google</string>
+    <string name="auth_headline">Go Live. Battle. Shine.</string>
+    <string name="auth_subhead">Real-time video rooms, live PK duels, animated gifts, and creator communities.</string>
+    <string name="nav_discover">Discover</string>
+    <string name="nav_go_live">Go Live</string>
+    <string name="nav_wallet">Wallet</string>
+    <string name="action_go_live_now">Go Live Now</string>
+    <string name="action_launch_demo_rooms">Launch Demo Live Rooms</string>
+    <string name="action_send">Send</string>
+    <string name="action_end_live">End Live</string>
+    <string name="action_sign_out">Sign Out</string>
+    <string name="hint_say_something">Say something nice...</string>
+    <string name="hint_stream_title">What are you streaming today?</string>
+    <string name="label_pk_battle">PK BATTLE</string>
+    <string name="label_live_badge">LIVE</string>
+</resources>

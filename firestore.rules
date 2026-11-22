@@ -1,0 +1,226 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40 &&
+             data.bio is string && data.bio.size() <= 160 &&
+             (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 500)) &&
+             data.coinBalance is int && data.coinBalance >= 0 && data.coinBalance <= 100000000 &&
+             data.diamondsEarned is int && data.diamondsEarned >= 0 && data.diamondsEarned <= 100000000 &&
+             data.level is int && data.level >= 1 && data.level <= 999 &&
+             data.followingCount is int && data.followingCount >= 0 && data.followingCount <= 1000000 &&
+             data.followersCount is int && data.followersCount >= 0 && data.followersCount <= 10000000 &&
+             data.dailyCheckInDay is int && data.dailyCheckInDay >= 0 && data.dailyCheckInDay <= 3650 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCoinTransaction(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.txType in ['RECHARGE', 'GIFT_SENT', 'GIFT_RECEIVED', 'DAILY_BONUS'] &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 80 &&
+             data.coinDelta is int && data.coinDelta != 0 && data.coinDelta >= -1000000 && data.coinDelta <= 1000000 &&
+             (!('streamId' in data) || (data.streamId is string && data.streamId.size() <= 128)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidLiveStream(data) {
+      return data.hostId is string && data.hostId.size() >= 1 && data.hostId.size() <= 128 &&
+             data.hostName is string && data.hostName.size() >= 1 && data.hostName.size() <= 40 &&
+             (!('hostAvatarUrl' in data) || (data.hostAvatarUrl is string && data.hostAvatarUrl.size() <= 500)) &&
+             data.hostLevel is int && data.hostLevel >= 1 && data.hostLevel <= 999 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 80 &&
+             data.category in ['MUSIC', 'DANCE', 'GAMING', 'TALK', 'PK'] &&
+             data.coverKey in ['acoustic', 'dance', 'gaming', 'talkshow', 'camera'] &&
+             data.streamUrl is string && data.streamUrl.size() <= 500 &&
+             data.visibility in ['PUBLIC', 'PRIVATE'] &&
+             data.status in ['LIVE', 'ENDED'] &&
+             data.pkActive is bool &&
+             (!('pkOpponentName' in data) || (data.pkOpponentName is string && data.pkOpponentName.size() <= 40)) &&
+             data.pkHostScore is int && data.pkHostScore >= 0 && data.pkHostScore <= 100000000 &&
+             data.pkOpponentScore is int && data.pkOpponentScore >= 0 && data.pkOpponentScore <= 100000000 &&
+             data.viewerCount is int && data.viewerCount >= 0 && data.viewerCount <= 10000000 &&
+             data.totalGiftsCoins is int && data.totalGiftsCoins >= 0 && data.totalGiftsCoins <= 100000000 &&
+             data.likeCount is int && data.likeCount >= 0 && data.likeCount <= 100000000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidStreamMessage(data) {
+      return data.streamId is string && isValidId(data.streamId) &&
+             data.streamVisibility in ['PUBLIC', 'PRIVATE'] &&
+             data.hostId is string && data.hostId.size() >= 1 && data.hostId.size() <= 128 &&
+             data.senderId is string && data.senderId.size() >= 1 && data.senderId.size() <= 128 &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 40 &&
+             data.senderLevel is int && data.senderLevel >= 1 && data.senderLevel <= 999 &&
+             data.messageType in ['CHAT', 'GIFT', 'JOIN', 'SYSTEM'] &&
+             data.body is string && data.body.size() >= 1 && data.body.size() <= 200 &&
+             (!('giftName' in data) || (data.giftName is string && data.giftName.size() <= 40)) &&
+             (!('giftCoins' in data) || (data.giftCoins is int && data.giftCoins >= 0 && data.giftCoins <= 1000000)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // 1. User profiles (strictly owner-isolated to protect PII and wallet balances)
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'bio', 'coinBalance', 'diamondsEarned',
+                         'level', 'followingCount', 'followersCount', 'dailyCheckInDay',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'bio', 'avatarUrl', 'coinBalance', 'diamondsEarned',
+                         'level', 'followingCount', 'followersCount', 'dailyCheckInDay',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action: Edit profile metadata
+                         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'bio', 'avatarUrl', 'updatedAt']) ||
+                         // Action: Wallet / stats / check-in update
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'coinBalance', 'diamondsEarned', 'level', 'followingCount',
+                           'dailyCheckInDay', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // 2. Owner-only coin & gift transaction ledger
+      match /transactions/{txId} {
+        allow get: if isOwner(userId) && isValidId(txId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(txId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'txType', 'title', 'coinDelta', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'txType', 'title', 'coinDelta', 'streamId', 'createdAt']) &&
+                         isValidCoinTransaction(incoming());
+
+        allow update, delete: if false;
+      }
+    }
+
+    // 3. Live broadcast rooms
+    match /live_streams/{streamId} {
+      allow get: if isSignedIn() && isValidId(streamId) &&
+                    (existing().visibility == 'PUBLIC' || existing().hostId == request.auth.uid);
+
+      allow list: if isSignedIn() &&
+                     (resource.data.visibility == 'PUBLIC' || resource.data.hostId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(streamId) &&
+                       incoming().hostId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'hostId', 'hostName', 'hostLevel', 'title', 'category', 'coverKey',
+                         'streamUrl', 'visibility', 'status', 'pkActive', 'pkHostScore',
+                         'pkOpponentScore', 'viewerCount', 'totalGiftsCoins', 'likeCount',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'hostId', 'hostName', 'hostAvatarUrl', 'hostLevel', 'title', 'category',
+                         'coverKey', 'streamUrl', 'visibility', 'status', 'pkActive',
+                         'pkOpponentName', 'pkHostScore', 'pkOpponentScore', 'viewerCount',
+                         'totalGiftsCoins', 'likeCount', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLiveStream(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(streamId) &&
+                       isValidLiveStream(incoming()) &&
+                       incoming().hostId == existing().hostId &&
+                       incoming().createdAt == existing().createdAt &&
+                       existing().status == 'LIVE' &&
+                       (
+                         // Action 1: Host updates room metadata, PK state, or ends stream
+                         (
+                           existing().hostId == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'title', 'category', 'visibility', 'status', 'pkActive',
+                             'pkOpponentName', 'pkHostScore', 'pkOpponentScore', 'streamUrl', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 2: Viewer engagement on a PUBLIC LIVE stream (join/leave, likes, gifts)
+                         (
+                           existing().visibility == 'PUBLIC' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'viewerCount', 'likeCount', 'totalGiftsCoins',
+                             'pkHostScore', 'pkOpponentScore', 'updatedAt'
+                           ]) &&
+                           incoming().likeCount >= existing().likeCount &&
+                           incoming().totalGiftsCoins >= existing().totalGiftsCoins
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidId(streamId) && existing().hostId == request.auth.uid;
+
+      // 4. Real-time chat & virtual gift feed inside a live stream room
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(streamId) && isValidId(messageId) &&
+                      (existing().streamVisibility == 'PUBLIC' || existing().hostId == request.auth.uid);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.streamVisibility == 'PUBLIC' || resource.data.hostId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(streamId) &&
+                         isValidId(messageId) &&
+                         incoming().senderId == request.auth.uid &&
+                         incoming().streamId == streamId &&
+                         incoming().keys().hasAll([
+                           'streamId', 'streamVisibility', 'hostId', 'senderId',
+                           'senderName', 'senderLevel', 'messageType', 'body', 'createdAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'streamId', 'streamVisibility', 'hostId', 'senderId',
+                           'senderName', 'senderLevel', 'messageType', 'body',
+                           'giftName', 'giftCoins', 'createdAt'
+                         ]) &&
+                         isValidStreamMessage(incoming()) &&
+                         exists(/databases/$(database)/documents/live_streams/$(streamId));
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}
